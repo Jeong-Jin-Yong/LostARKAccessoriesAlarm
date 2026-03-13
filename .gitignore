@@ -6,5 +6,4 @@ watch.log
 
 # PyInstaller outputs
 build/
-dist/
 *.spec
