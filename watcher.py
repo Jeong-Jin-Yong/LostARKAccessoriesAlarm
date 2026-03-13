@@ -1,5 +1,7 @@
 import json
+import hashlib
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -14,10 +16,15 @@ import winsound
 API_URL = "https://developer-lostark.game.onstove.com/auctions/items"
 POLL_SECONDS = int(os.environ.get("LOSTARK_WATCH_INTERVAL", "60"))
 TOKEN = os.environ.get("LOSTARK_API_TOKEN", "").strip()
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = (
+    Path(sys.executable).resolve().parent
+    if bool(getattr(sys, "frozen", False))
+    else Path(__file__).resolve().parent
+)
 STATE_PATH = BASE_DIR / "state.json"
 LOG_PATH = BASE_DIR / "watch.log"
 LAST_LOG_RESET_HOUR: str | None = None
+STATE_LOCK = threading.RLock()
 DEFAULT_MONITORS = [
     {
         "key": "necklace_damage",
@@ -97,6 +104,12 @@ DEFAULT_MONITORS = [
     },
 ]
 
+DEFAULT_UPDATE_REPO = "Jeong-Jin-Yong/LostARKAccessoriesAlarm"
+DEFAULT_UPDATE_REF = "main"
+DEFAULT_UPDATE_EXE_PATH = "dist/LostArkWatcher.exe"
+GITHUB_API_BASE = "https://api.github.com"
+UPDATE_MARKER_FILE = "last_update_blob_sha.txt"
+
 
 def log(message: str) -> None:
     global LAST_LOG_RESET_HOUR
@@ -116,12 +129,13 @@ def log(message: str) -> None:
 
 
 def load_state() -> dict:
-    if not STATE_PATH.exists():
-        return {"seen_by_monitor": {}}
-    try:
-        raw_state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return {"seen_by_monitor": {}}
+    with STATE_LOCK:
+        if not STATE_PATH.exists():
+            return {"seen_by_monitor": {}}
+        try:
+            raw_state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return {"seen_by_monitor": {}}
 
     if "seen_by_monitor" in raw_state:
         return raw_state
@@ -131,24 +145,18 @@ def load_state() -> dict:
 
 
 def save_state(signatures_by_monitor: dict[str, set[str]]) -> None:
-    state = load_state()
-    app_settings = state.get("app_settings") if isinstance(state, dict) else None
-    payload = {
-        "seen_by_monitor": {
-            key: sorted(values) for key, values in signatures_by_monitor.items()
+    with STATE_LOCK:
+        state = load_state()
+        app_settings = state.get("app_settings") if isinstance(state, dict) else None
+        payload = {
+            "seen_by_monitor": {
+                key: sorted(values) for key, values in signatures_by_monitor.items()
+            }
         }
-    }
-    if isinstance(app_settings, dict):
-        payload["app_settings"] = app_settings
+        if isinstance(app_settings, dict):
+            payload["app_settings"] = app_settings
 
-    STATE_PATH.write_text(
-        json.dumps(
-            payload,
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+        write_state(payload)
 
 
 def load_app_settings() -> dict:
@@ -164,20 +172,203 @@ def load_app_settings() -> dict:
     return {
         "token": str(settings.get("token", "")).strip(),
         "poll_seconds": saved_interval,
+        "installed_exe_blob_sha": str(settings.get("installed_exe_blob_sha", "")).strip(),
     }
 
 
 def save_app_settings(token: str, poll_seconds: int) -> None:
-    state = load_state()
-    state["app_settings"] = {
-        "token": token.strip(),
-        "poll_seconds": poll_seconds,
-    }
-    state.setdefault("seen_by_monitor", {})
-    STATE_PATH.write_text(
+    with STATE_LOCK:
+        state = load_state()
+        existing_settings = state.get("app_settings") if isinstance(state, dict) else None
+        if not isinstance(existing_settings, dict):
+            existing_settings = {}
+
+        existing_settings.update(
+            {
+                "token": token.strip(),
+                "poll_seconds": poll_seconds,
+            }
+        )
+        state["app_settings"] = existing_settings
+        state.setdefault("seen_by_monitor", {})
+        write_state(state)
+
+
+def save_installed_exe_blob_sha(blob_sha: str) -> None:
+    with STATE_LOCK:
+        state = load_state()
+        app_settings = state.get("app_settings") if isinstance(state, dict) else None
+        if not isinstance(app_settings, dict):
+            app_settings = {}
+        app_settings["installed_exe_blob_sha"] = blob_sha.strip()
+        state["app_settings"] = app_settings
+        state.setdefault("seen_by_monitor", {})
+        write_state(state)
+
+
+def write_state(state: dict) -> None:
+    temp_path = STATE_PATH.with_suffix(".json.tmp")
+    temp_path.write_text(
         json.dumps(state, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    os.replace(temp_path, STATE_PATH)
+
+
+def is_frozen_executable() -> bool:
+    return bool(getattr(sys, "frozen", False))
+
+
+def runtime_dir() -> Path:
+    return BASE_DIR
+
+
+def compute_github_blob_sha(file_path: Path) -> str | None:
+    try:
+        content = file_path.read_bytes()
+    except Exception:
+        return None
+
+    header = f"blob {len(content)}\0".encode("utf-8")
+    return hashlib.sha1(header + content).hexdigest()
+
+
+def github_api_get_json(url: str) -> dict:
+    req = request.Request(
+        url,
+        headers={
+            "accept": "application/vnd.github+json",
+            "user-agent": "LostArkWatcher-updater",
+        },
+        method="GET",
+    )
+    with request.urlopen(req, timeout=20) as resp:
+        return json.load(resp)
+
+
+def resolve_update_ref(repo: str) -> str:
+    env_ref = os.environ.get("LOSTARK_UPDATE_REF", "").strip()
+    if env_ref:
+        return env_ref
+
+    try:
+        repo_meta = github_api_get_json(f"{GITHUB_API_BASE}/repos/{repo}")
+        default_branch = str(repo_meta.get("default_branch", "")).strip()
+        if default_branch:
+            return default_branch
+    except Exception as exc:
+        log(f"Auto-update: failed to resolve default branch ({exc})")
+
+    return DEFAULT_UPDATE_REF
+
+
+def fetch_latest_exe_info(repo: str, ref: str, exe_path: str) -> dict | None:
+    try:
+        encoded_path = exe_path.strip("/")
+        payload = github_api_get_json(
+            f"{GITHUB_API_BASE}/repos/{repo}/contents/{encoded_path}?ref={ref}"
+        )
+    except error.HTTPError as exc:
+        if exc.code == 404:
+            log(
+                "Auto-update: executable not found in repository "
+                f"({repo}/{ref}/{exe_path})"
+            )
+            return None
+        raise
+
+    blob_sha = str(payload.get("sha", "")).strip()
+    download_url = str(payload.get("download_url", "")).strip()
+    if not blob_sha or not download_url:
+        log("Auto-update: missing download URL or blob SHA")
+        return None
+
+    return {
+        "blob_sha": blob_sha,
+        "download_url": download_url,
+    }
+
+
+def download_file(download_url: str, output_path: Path) -> None:
+    req = request.Request(
+        download_url,
+        headers={"user-agent": "LostArkWatcher-updater"},
+        method="GET",
+    )
+    with request.urlopen(req, timeout=60) as resp:
+        payload = resp.read()
+
+    if not payload:
+        raise RuntimeError("Downloaded file is empty")
+    output_path.write_bytes(payload)
+
+
+def launch_self_replace_and_restart(
+    current_exe: Path,
+    new_exe: Path,
+    blob_sha: str,
+    current_pid: int,
+) -> bool:
+    updater_path = current_exe.with_name("LostArkWatcher-updater.bat")
+    marker_path = runtime_dir() / UPDATE_MARKER_FILE
+
+    escaped_blob_sha = blob_sha.replace("\"", "")
+
+    updater_script = f"""@echo off
+setlocal
+set \"TARGET={current_exe}\"
+set \"NEWFILE={new_exe}\"
+set \"MARKER={marker_path}\"
+set \"PID={current_pid}\"
+
+:wait_pid
+tasklist /FI \"PID eq %PID%\" | find /I \"%PID%\" >nul
+if not errorlevel 1 (
+    timeout /t 1 /nobreak >nul
+    goto wait_pid
+)
+
+for /L %%I in (1,1,20) do (
+    move /Y \"%NEWFILE%\" \"%TARGET%\" >nul 2>nul
+    if not errorlevel 1 goto launch
+    timeout /t 1 /nobreak >nul
+)
+
+exit /b 1
+
+:launch
+> "%MARKER%" echo {escaped_blob_sha}
+start \"\" \"%TARGET%\"
+del /Q \"%~f0\" >nul 2>nul
+exit /b 0
+"""
+
+    updater_path.write_text(updater_script, encoding="utf-8")
+
+    try:
+        subprocess.Popen(
+            ["cmd.exe", "/c", str(updater_path)],
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        return True
+    except Exception as exc:
+        log(f"Auto-update: failed to launch updater script ({exc})")
+        return False
+
+
+def apply_update_marker_if_present() -> None:
+    marker_path = runtime_dir() / UPDATE_MARKER_FILE
+    if not marker_path.exists():
+        return
+
+    try:
+        blob_sha = marker_path.read_text(encoding="utf-8").strip()
+        if blob_sha:
+            save_installed_exe_blob_sha(blob_sha)
+    except Exception as exc:
+        log(f"Auto-update: failed to apply update marker ({exc})")
+    finally:
+        marker_path.unlink(missing_ok=True)
 
 
 def fetch_items(query: dict, token: str) -> list[dict]:
@@ -401,11 +592,82 @@ class WatcherPopup:
         self.stop_event: threading.Event | None = None
         self.log_window: tk.Toplevel | None = None
         self.log_text: scrolledtext.ScrolledText | None = None
+        self.update_thread: threading.Thread | None = None
 
         self._build_layout()
         self._update_buttons()
         self.root.protocol("WM_DELETE_WINDOW", self._handle_close)
         self.root.after(1000, self._refresh_runtime_state)
+        self.root.after(1500, self._start_auto_update_check)
+
+    def _start_auto_update_check(self) -> None:
+        if not is_frozen_executable():
+            return
+        if self.update_thread is not None and self.update_thread.is_alive():
+            return
+
+        self.update_thread = threading.Thread(
+            target=self._check_and_apply_auto_update,
+            daemon=True,
+        )
+        self.update_thread.start()
+
+    def _check_and_apply_auto_update(self) -> None:
+        apply_update_marker_if_present()
+
+        repo = os.environ.get("LOSTARK_UPDATE_REPO", DEFAULT_UPDATE_REPO).strip()
+        exe_path = os.environ.get("LOSTARK_UPDATE_EXE_PATH", DEFAULT_UPDATE_EXE_PATH).strip()
+        if not repo:
+            log("Auto-update: repository is not configured")
+            return
+
+        ref = resolve_update_ref(repo)
+
+        try:
+            latest = fetch_latest_exe_info(repo, ref, exe_path)
+            if latest is None:
+                return
+
+            current_exe = Path(sys.executable)
+            installed_blob_sha = compute_github_blob_sha(current_exe)
+            if not installed_blob_sha:
+                app_settings = load_app_settings()
+                installed_blob_sha = app_settings["installed_exe_blob_sha"]
+            latest_blob_sha = latest["blob_sha"]
+
+            if installed_blob_sha == latest_blob_sha:
+                log("Auto-update: already up to date")
+                return
+
+            new_exe = current_exe.with_name("LostArkWatcher.new.exe")
+            download_file(latest["download_url"], new_exe)
+
+            def shutdown_for_update() -> None:
+                messagebox.showinfo(
+                    "업데이트 진행",
+                    "최신 버전을 내려받았습니다. 앱을 재시작합니다.",
+                )
+                if not launch_self_replace_and_restart(
+                    current_exe,
+                    new_exe,
+                    latest_blob_sha,
+                    os.getpid(),
+                ):
+                    if new_exe.exists():
+                        new_exe.unlink(missing_ok=True)
+                    messagebox.showerror(
+                        "업데이트 실패",
+                        "업데이트 적용에 실패했습니다. 잠시 후 다시 실행해 주세요.",
+                    )
+                    return
+                self._stop_watch()
+                self.root.destroy()
+
+            self.root.after(0, shutdown_for_update)
+        except error.HTTPError as exc:
+            log(f"Auto-update HTTP error {exc.code}")
+        except Exception as exc:
+            log(f"Auto-update failed: {exc}")
 
     def _build_layout(self) -> None:
         frame = tk.Frame(self.root, padx=14, pady=14)
