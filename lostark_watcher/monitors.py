@@ -169,14 +169,14 @@ DEFAULT_MONITORS = [
                 "label": "아공강 수치",
                 "default": 500,
                 "preset_levels": level_options(5, 3, 1.35),
-                "query_option": {"FirstOption": 7, "SecondOption": 47, "match": "exact"},
+                "query_option": {"FirstOption": 7, "SecondOption": 51, "match": "exact"},
             },
             {
                 "id": "option_2",
                 "label": "아피강 수치",
                 "default": 750,
                 "preset_levels": level_options(7.5, 4.5, 2),
-                "query_option": {"FirstOption": 7, "SecondOption": 48, "match": "exact"},
+                "query_option": {"FirstOption": 7, "SecondOption": 52, "match": "exact"},
             },
             {
                 "id": "quality_min",
