@@ -37,12 +37,27 @@ DEFAULT_MONITORS = [
             "PageNo": 1,
             "Sort": "BUY_PRICE",
             "SortCondition": "ASC",
-            "EtcOptions": [
-                {"FirstOption": 7, "SecondOption": 42, "MinValue": 200, "MaxValue": 200},
-                {"FirstOption": 7, "SecondOption": 41, "MinValue": 260, "MaxValue": 260},
-                {"FirstOption": 1, "SecondOption": 11, "MinValue": 17500, "MaxValue": 99999},
-            ],
         },
+        "custom_values": [
+            {
+                "id": "option_1",
+                "label": "적주피 수치",
+                "default": 200,
+                "query_option": {"FirstOption": 7, "SecondOption": 42, "match": "exact"},
+            },
+            {
+                "id": "option_2",
+                "label": "추피 수치",
+                "default": 260,
+                "query_option": {"FirstOption": 7, "SecondOption": 41, "match": "exact"},
+            },
+            {
+                "id": "quality_min",
+                "label": "최소 품질",
+                "default": 17500,
+                "query_option": {"FirstOption": 1, "SecondOption": 11, "match": "minimum"},
+            },
+        ],
     },
     {
         "key": "necklace_brand_gauge",
@@ -59,12 +74,27 @@ DEFAULT_MONITORS = [
             "PageNo": 1,
             "Sort": "BUY_PRICE",
             "SortCondition": "ASC",
-            "EtcOptions": [
-                {"FirstOption": 7, "SecondOption": 44, "MinValue": 800, "MaxValue": 800},
-                {"FirstOption": 7, "SecondOption": 43, "MinValue": 600, "MaxValue": 600},
-                {"FirstOption": 1, "SecondOption": 11, "MinValue": 17300, "MaxValue": 99999},
-            ],
         },
+        "custom_values": [
+            {
+                "id": "option_1",
+                "label": "낙인력 수치",
+                "default": 800,
+                "query_option": {"FirstOption": 7, "SecondOption": 44, "match": "exact"},
+            },
+            {
+                "id": "option_2",
+                "label": "게이지 수치",
+                "default": 600,
+                "query_option": {"FirstOption": 7, "SecondOption": 43, "match": "exact"},
+            },
+            {
+                "id": "quality_min",
+                "label": "최소 품질",
+                "default": 17300,
+                "query_option": {"FirstOption": 1, "SecondOption": 11, "match": "minimum"},
+            },
+        ],
     },
     {
         "key": "earring_attack",
@@ -77,12 +107,27 @@ DEFAULT_MONITORS = [
             "PageNo": 1,
             "Sort": "BUY_PRICE",
             "SortCondition": "ASC",
-            "EtcOptions": [
-                {"FirstOption": 7, "SecondOption": 45, "MinValue": 155, "MaxValue": 155},
-                {"FirstOption": 7, "SecondOption": 46, "MinValue": 300, "MaxValue": 300},
-                {"FirstOption": 1, "SecondOption": 11, "MinValue": 13500, "MaxValue": 99999},
-            ],
         },
+        "custom_values": [
+            {
+                "id": "option_1",
+                "label": "공퍼 수치",
+                "default": 155,
+                "query_option": {"FirstOption": 7, "SecondOption": 45, "match": "exact"},
+            },
+            {
+                "id": "option_2",
+                "label": "무공퍼 수치",
+                "default": 300,
+                "query_option": {"FirstOption": 7, "SecondOption": 46, "match": "exact"},
+            },
+            {
+                "id": "quality_min",
+                "label": "최소 품질",
+                "default": 13500,
+                "query_option": {"FirstOption": 1, "SecondOption": 11, "match": "minimum"},
+            },
+        ],
     },
     {
         "key": "ring_crit",
@@ -95,12 +140,27 @@ DEFAULT_MONITORS = [
             "PageNo": 1,
             "Sort": "BUY_PRICE",
             "SortCondition": "ASC",
-            "EtcOptions": [
-                {"FirstOption": 7, "SecondOption": 49, "MinValue": 155, "MaxValue": 155},
-                {"FirstOption": 7, "SecondOption": 50, "MinValue": 400, "MaxValue": 400},
-                {"FirstOption": 1, "SecondOption": 11, "MinValue": 12500, "MaxValue": 99999},
-            ],
         },
+        "custom_values": [
+            {
+                "id": "option_1",
+                "label": "치적 수치",
+                "default": 155,
+                "query_option": {"FirstOption": 7, "SecondOption": 49, "match": "exact"},
+            },
+            {
+                "id": "option_2",
+                "label": "치피 수치",
+                "default": 400,
+                "query_option": {"FirstOption": 7, "SecondOption": 50, "match": "exact"},
+            },
+            {
+                "id": "quality_min",
+                "label": "최소 품질",
+                "default": 12500,
+                "query_option": {"FirstOption": 1, "SecondOption": 11, "match": "minimum"},
+            },
+        ],
     },
 ]
 
@@ -169,24 +229,40 @@ def load_app_settings() -> dict:
     if not isinstance(saved_interval, int) or saved_interval <= 0:
         saved_interval = POLL_SECONDS
 
+    saved_monitor_values = settings.get("monitor_values", {})
+    if not isinstance(saved_monitor_values, dict):
+        saved_monitor_values = {}
+
     return {
         "token": str(settings.get("token", "")).strip(),
         "poll_seconds": saved_interval,
         "installed_exe_blob_sha": str(settings.get("installed_exe_blob_sha", "")).strip(),
+        "monitor_values": merge_monitor_values(saved_monitor_values),
     }
 
 
-def save_app_settings(token: str, poll_seconds: int) -> None:
+def save_app_settings(
+    token: str,
+    poll_seconds: int,
+    monitor_values: dict[str, dict[str, int]] | None = None,
+) -> None:
     with STATE_LOCK:
         state = load_state()
         existing_settings = state.get("app_settings") if isinstance(state, dict) else None
         if not isinstance(existing_settings, dict):
             existing_settings = {}
 
+        resolved_monitor_values = merge_monitor_values(
+            monitor_values
+            if monitor_values is not None
+            else existing_settings.get("monitor_values", {})
+        )
+
         existing_settings.update(
             {
                 "token": token.strip(),
                 "poll_seconds": poll_seconds,
+                "monitor_values": resolved_monitor_values,
             }
         )
         state["app_settings"] = existing_settings
@@ -213,6 +289,65 @@ def write_state(state: dict) -> None:
         encoding="utf-8",
     )
     os.replace(temp_path, STATE_PATH)
+
+
+def default_monitor_values() -> dict[str, dict[str, int]]:
+    return {
+        monitor["key"]: {
+            field["id"]: field["default"] for field in monitor.get("custom_values", [])
+        }
+        for monitor in DEFAULT_MONITORS
+    }
+
+
+def merge_monitor_values(saved_values: dict) -> dict[str, dict[str, int]]:
+    merged_values = default_monitor_values()
+    for monitor in DEFAULT_MONITORS:
+        monitor_key = monitor["key"]
+        monitor_saved_values = saved_values.get(monitor_key, {})
+        if not isinstance(monitor_saved_values, dict):
+            continue
+        for field in monitor.get("custom_values", []):
+            raw_value = monitor_saved_values.get(field["id"])
+            if isinstance(raw_value, int) and raw_value >= 0:
+                merged_values[monitor_key][field["id"]] = raw_value
+    return merged_values
+
+
+def build_monitor_query(monitor: dict, monitor_values: dict[str, int] | None = None) -> dict:
+    query = dict(monitor["query"])
+    resolved_values = monitor_values if isinstance(monitor_values, dict) else {}
+    etc_options = []
+    for field in monitor.get("custom_values", []):
+        value = resolved_values.get(field["id"], field["default"])
+        option = dict(field["query_option"])
+        match_type = option.pop("match", "exact")
+        if match_type == "minimum":
+            option["MinValue"] = value
+            option["MaxValue"] = 99999
+        else:
+            option["MinValue"] = value
+            option["MaxValue"] = value
+        etc_options.append(option)
+    query["EtcOptions"] = etc_options
+    return query
+
+
+def build_monitor_runtime_config(
+    monitor_values_by_key: dict[str, dict[str, int]] | None = None,
+) -> list[dict]:
+    resolved_values = merge_monitor_values(
+        monitor_values_by_key if isinstance(monitor_values_by_key, dict) else {}
+    )
+    runtime_monitors = []
+    for monitor in DEFAULT_MONITORS:
+        runtime_monitor = dict(monitor)
+        runtime_monitor["query"] = build_monitor_query(
+            monitor,
+            resolved_values.get(monitor["key"], {}),
+        )
+        runtime_monitors.append(runtime_monitor)
+    return runtime_monitors
 
 
 def is_frozen_executable() -> bool:
@@ -566,7 +701,14 @@ def run_watcher_loop(
 
 def run_cli_watcher() -> int:
     stop_event = threading.Event()
-    run_watcher_loop(stop_event, normalize_token(TOKEN), POLL_SECONDS, DEFAULT_MONITORS)
+    app_settings = load_app_settings()
+    token = TOKEN if TOKEN else app_settings["token"]
+    run_watcher_loop(
+        stop_event,
+        normalize_token(token),
+        app_settings["poll_seconds"],
+        build_monitor_runtime_config(app_settings["monitor_values"]),
+    )
     return 0
 
 
@@ -584,6 +726,7 @@ class WatcherPopup:
         self.token_var = tk.StringVar(value=initial_token)
         self.interval_var = tk.IntVar(value=initial_interval)
         self.status_var = tk.StringVar(value="대기 중")
+        self.monitor_values = app_settings["monitor_values"]
         self.monitor_enabled: dict[str, tk.BooleanVar] = {
             monitor["key"]: tk.BooleanVar(value=True) for monitor in DEFAULT_MONITORS
         }
@@ -774,7 +917,7 @@ class WatcherPopup:
 
             self.token_var.set(token_var.get().strip())
             self.interval_var.set(interval)
-            save_app_settings(self.token_var.get(), interval)
+            save_app_settings(self.token_var.get(), interval, self.monitor_values)
             dialog.destroy()
 
         button_row = tk.Frame(container)
@@ -788,8 +931,8 @@ class WatcherPopup:
     def _open_accessory_settings(self) -> None:
         dialog = tk.Toplevel(self.root)
         dialog.title("악세 설정")
-        dialog.geometry("380x220")
-        dialog.resizable(False, False)
+        dialog.geometry("520x500")
+        dialog.resizable(False, True)
         dialog.transient(self.root)
         dialog.grab_set()
 
@@ -797,26 +940,125 @@ class WatcherPopup:
             monitor["key"]: tk.BooleanVar(value=self.monitor_enabled[monitor["key"]].get())
             for monitor in DEFAULT_MONITORS
         }
+        draft_value_vars: dict[str, dict[str, tk.StringVar]] = {
+            monitor["key"]: {
+                field["id"]: tk.StringVar(
+                    value=str(self.monitor_values[monitor["key"]][field["id"]])
+                )
+                for field in monitor.get("custom_values", [])
+            }
+            for monitor in DEFAULT_MONITORS
+        }
 
         container = tk.Frame(dialog, padx=12, pady=12)
         container.pack(fill="both", expand=True)
 
-        tk.Label(container, text="탐색할 악세 조건을 선택하세요.", font=("Malgun Gothic", 9)).pack(anchor="w", pady=(0, 8))
+        tk.Label(
+            container,
+            text="탐색할 악세 조건과 수치를 설정하세요.",
+            font=("Malgun Gothic", 9),
+        ).pack(anchor="w", pady=(0, 8))
+
+        scroll_frame = tk.Frame(container)
+        scroll_frame.pack(fill="both", expand=True)
+
+        canvas = tk.Canvas(scroll_frame, highlightthickness=0)
+        scrollbar = tk.Scrollbar(scroll_frame, orient="vertical", command=canvas.yview)
+        sections_container = tk.Frame(canvas)
+
+        sections_container.bind(
+            "<Configure>",
+            lambda _event: canvas.configure(scrollregion=canvas.bbox("all")),
+        )
+
+        canvas_window = canvas.create_window((0, 0), window=sections_container, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        def resize_canvas_content(_event: tk.Event) -> None:
+            canvas.itemconfigure(canvas_window, width=_event.width)
+
+        def on_mousewheel(event: tk.Event) -> None:
+            if event.delta == 0:
+                return
+            canvas.yview_scroll(int(-event.delta / 120), "units")
+
+        canvas.bind("<Configure>", resize_canvas_content)
+
+        def bind_mousewheel(_event: tk.Event) -> None:
+            canvas.bind_all("<MouseWheel>", on_mousewheel)
+
+        def unbind_mousewheel(_event: tk.Event) -> None:
+            canvas.unbind_all("<MouseWheel>")
+
+        dialog.bind("<Enter>", bind_mousewheel)
+        dialog.bind("<Leave>", unbind_mousewheel)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
 
         for monitor in DEFAULT_MONITORS:
-            tk.Checkbutton(
-                container,
-                text=monitor["label"],
-                variable=draft_vars[monitor["key"]],
+            section = tk.LabelFrame(
+                sections_container,
                 font=("Malgun Gothic", 9),
-            ).pack(anchor="w", pady=3)
+                padx=10,
+                pady=8,
+            )
+            section.pack(fill="x", pady=4)
+
+            tk.Checkbutton(
+                section,
+                text=f"{monitor['label']} 사용",
+                variable=draft_vars[monitor["key"]],
+                font=("Malgun Gothic", 9, "bold"),
+            ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+
+            for row_index, field in enumerate(monitor.get("custom_values", []), start=1):
+                tk.Label(section, text=field["label"], font=("Malgun Gothic", 9)).grid(
+                    row=row_index,
+                    column=0,
+                    sticky="w",
+                    padx=(0, 10),
+                    pady=2,
+                )
+                tk.Entry(
+                    section,
+                    textvariable=draft_value_vars[monitor["key"]][field["id"]],
+                    width=18,
+                ).grid(row=row_index, column=1, sticky="w", pady=2)
 
         def save() -> None:
             if not any(var.get() for var in draft_vars.values()):
                 messagebox.showerror("입력 오류", "최소 1개 이상의 악세 조건을 선택해주세요.")
                 return
+
+            resolved_monitor_values = default_monitor_values()
+            for monitor in DEFAULT_MONITORS:
+                for field in monitor.get("custom_values", []):
+                    raw_value = draft_value_vars[monitor["key"]][field["id"]].get().strip()
+                    try:
+                        value = int(raw_value)
+                    except ValueError:
+                        messagebox.showerror(
+                            "입력 오류",
+                            f"{monitor['label']}의 {field['label']}은 숫자로 입력해주세요.",
+                        )
+                        return
+                    if value < 0:
+                        messagebox.showerror(
+                            "입력 오류",
+                            f"{monitor['label']}의 {field['label']}은 0 이상이어야 합니다.",
+                        )
+                        return
+                    resolved_monitor_values[monitor["key"]][field["id"]] = value
+
             for key, var in draft_vars.items():
                 self.monitor_enabled[key].set(var.get())
+            self.monitor_values = resolved_monitor_values
+            save_app_settings(
+                self.token_var.get(),
+                self.interval_var.get(),
+                self.monitor_values,
+            )
             dialog.destroy()
 
         button_row = tk.Frame(container)
@@ -870,7 +1112,7 @@ class WatcherPopup:
 
     def _selected_monitors(self) -> list[dict]:
         selected = []
-        for monitor in DEFAULT_MONITORS:
+        for monitor in build_monitor_runtime_config(self.monitor_values):
             if self.monitor_enabled[monitor["key"]].get():
                 selected.append(monitor)
         return selected
