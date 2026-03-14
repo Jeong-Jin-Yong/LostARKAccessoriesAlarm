@@ -56,6 +56,14 @@ def normalize_option_name(name: str) -> str:
     return (name or "").strip()
 
 
+def normalize_option_match_key(name: str) -> str:
+    normalized = normalize_option_name(name)
+    normalized = normalized.replace(",", "").replace(" ", "")
+    if normalized.endswith("증가"):
+        normalized = normalized.removesuffix("증가")
+    return normalized
+
+
 def format_option_value(option: dict) -> str:
     value = option.get("Value")
     if isinstance(value, float) and value.is_integer():
@@ -64,15 +72,19 @@ def format_option_value(option: dict) -> str:
 
 
 def extra_option_text(item: dict, fixed_options: set[str]) -> str:
-    normalized_fixed = {normalize_option_name(name) for name in fixed_options}
+    normalized_fixed = {normalize_option_match_key(name) for name in fixed_options}
+    extra_options: list[str] = []
     for option in item.get("Options", []):
         if option.get("Type") != "ACCESSORY_UPGRADE":
             continue
         option_name = normalize_option_name(option.get("OptionName", ""))
-        if option_name in normalized_fixed:
+        if normalize_option_match_key(option_name) in normalized_fixed:
             continue
-        return f"{option_name} {format_option_value(option)}"
-    return "없음"
+        extra_options.append(f"{option_name} {format_option_value(option)}")
+
+    if not extra_options:
+        return "없음"
+    return ", ".join(extra_options)
 
 
 def item_signature(item: dict) -> str:
