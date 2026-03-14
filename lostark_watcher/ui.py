@@ -17,7 +17,7 @@ from .runtime_context import (
     TOKEN,
     is_frozen_executable,
 )
-from .state import load_app_settings, save_app_settings
+from .state import clear_seen_by_monitor, load_app_settings, save_app_settings
 from .updater import (
     apply_update_marker_if_present,
     compute_github_blob_sha,
@@ -32,7 +32,7 @@ class WatcherPopup:
     def __init__(self) -> None:
         self.root = tk.Tk()
         self.root.title("LostArkWatcher 팝업")
-        self.root.geometry("420x240")
+        self.root.geometry("420x290")
         self.root.resizable(False, False)
 
         app_settings = load_app_settings()
@@ -191,6 +191,14 @@ class WatcherPopup:
             command=self._open_accessory_settings,
         )
         self.accessory_button.grid(row=2, column=0, columnspan=2, padx=4, pady=4, sticky="ew")
+
+        self.clear_button = tk.Button(
+            button_grid,
+            text="탐색 기록 초기화",
+            width=18,
+            command=self._clear_seen_history,
+        )
+        self.clear_button.grid(row=3, column=0, columnspan=2, padx=4, pady=4, sticky="ew")
 
         button_grid.grid_columnconfigure(0, weight=1)
         button_grid.grid_columnconfigure(1, weight=1)
@@ -480,10 +488,43 @@ class WatcherPopup:
     def _is_running(self) -> bool:
         return self.worker_thread is not None and self.worker_thread.is_alive()
 
+    def _clear_seen_history(self) -> None:
+        if self._is_running():
+            messagebox.showerror(
+                "실행 중",
+                "탐색 기록을 초기화하려면 먼저 탐색을 종료해주세요.",
+            )
+            return
+
+        confirmed = messagebox.askyesno(
+            "탐색 기록 초기화",
+            "저장된 탐색 기록을 초기화할까요?\nAPI 설정과 악세 설정은 유지됩니다.",
+        )
+        if not confirmed:
+            return
+
+        try:
+            clear_seen_by_monitor()
+        except OSError as exc:
+            log(f"Failed to clear saved watch history: {exc}")
+            messagebox.showerror(
+                "초기화 실패",
+                "탐색 기록 초기화에 실패했습니다. 파일 권한이나 사용 중 여부를 확인해주세요.",
+            )
+            return
+
+        self.status_var.set("탐색 기록 초기화됨")
+        log("Saved watch history cleared by user")
+        messagebox.showinfo(
+            "초기화 완료",
+            "탐색 기록을 초기화했습니다. 다음 탐색부터 새 기준으로 저장됩니다.",
+        )
+
     def _update_buttons(self) -> None:
         running = self._is_running()
         self.start_button.configure(state="disabled" if running else "normal")
         self.stop_button.configure(state="normal" if running else "disabled")
+        self.clear_button.configure(state="disabled" if running else "normal")
 
     def _refresh_runtime_state(self) -> None:
         if self._is_running():

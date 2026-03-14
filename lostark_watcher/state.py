@@ -39,6 +39,17 @@ def save_state(signatures_by_monitor: dict[str, set[str]]) -> None:
         write_state(payload)
 
 
+def clear_seen_by_monitor() -> None:
+    with STATE_LOCK:
+        state = load_state()
+        app_settings = state.get("app_settings") if isinstance(state, dict) else None
+        payload = {"seen_by_monitor": {}}
+        if isinstance(app_settings, dict):
+            payload["app_settings"] = app_settings
+
+        write_state(payload)
+
+
 def load_app_settings() -> dict:
     state = load_state()
     settings = state.get("app_settings", {}) if isinstance(state, dict) else {}
